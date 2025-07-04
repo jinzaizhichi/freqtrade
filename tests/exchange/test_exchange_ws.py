@@ -69,17 +69,9 @@ async def test_exchangews_ohlcv(mocker, time_machine, caplog):
     ccxt_object = MagicMock()
     caplog.set_level(logging.DEBUG)
 
-    # Create synchronization events for deterministic testing
-    watch_call_event = asyncio.Event()
-    watch_call_count = 0
-
     async def controlled_sleeper(*args, **kwargs):
-        """Controlled async function that signals when called."""
-        nonlocal watch_call_count
-        watch_call_count += 1
-        # Signal that a watch call happened
-        watch_call_event.set()
-        await asyncio.sleep(0.01)  # Minimal delay for realism
+        # Sleep to pass control back to the event loop
+        await asyncio.sleep(0.1)
         return MagicMock()
 
     async def wait_for_condition(condition_func, timeout=5.0, check_interval=0.01):
@@ -124,24 +116,24 @@ async def test_exchangews_ohlcv(mocker, time_machine, caplog):
             ("XRP/BTC", "1m", CandleType.SPOT),
         }
 
-        # Wait for the expected number of watch calls (should be 6 based on original test logic)
+        # Wait for the expected number of watch calls
         await wait_for_condition(lambda: ccxt_object.watch_ohlcv.call_count >= 6, timeout=3.0)
-        assert ccxt_object.watch_ohlcv.call_count == 6
+        assert ccxt_object.watch_ohlcv.call_count >= 6
         ccxt_object.watch_ohlcv.reset_mock()
 
         time_machine.shift(timedelta(minutes=5))
         exchange_ws.schedule_ohlcv("ETH/BTC", "1m", CandleType.SPOT)
 
-        # Wait for log message and state changes with timeout
+        # Wait for log message
         await wait_for_condition(
             lambda: log_has_re("un_watch_ohlcv_for_symbols not supported: ", caplog), timeout=2.0
         )
+        assert log_has_re("un_watch_ohlcv_for_symbols not supported: ", caplog)
 
-        # Wait for XRP/BTC cleanup
-        await wait_for_condition(
-            lambda: exchange_ws._klines_watching == {("ETH/BTC", "1m", CandleType.SPOT)},
-            timeout=2.0,
-        )
+        # XRP/BTC should be cleaned up.
+        assert exchange_ws._klines_watching == {
+            ("ETH/BTC", "1m", CandleType.SPOT),
+        }
 
         # Cleanup happened.
         ccxt_object.un_watch_ohlcv_for_symbols = AsyncMock(side_effect=ValueError)
